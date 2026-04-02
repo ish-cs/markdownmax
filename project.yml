@@ -1,0 +1,100 @@
+name: MarkdownMax
+options:
+  bundleIdPrefix: com.markdownmax
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16"
+  generateEmptyDirectories: true
+
+packages:
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit
+    from: 0.9.0
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts
+    from: 2.2.0
+
+targets:
+
+  # Core library — Models, Database, Export, Audio (no WhisperKit dep)
+  MarkdownMaxCore:
+    type: framework
+    platform: macOS
+    sources:
+      - path: Sources/MarkdownMaxCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.markdownmax.core
+        SWIFT_VERSION: "5.10"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        DEFINES_MODULE: YES
+        # Required so the framework is a valid bundle for codesign (no Info.plist → "bundle format unrecognized")
+        GENERATE_INFOPLIST_FILE: YES
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "1.0"
+      configs:
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+
+  # Main app target — depends on Core + WhisperKit + KeyboardShortcuts
+  MarkdownMax:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/MarkdownMax
+    resources:
+      - path: Sources/MarkdownMax/Assets.xcassets
+        optional: true
+    dependencies:
+      - target: MarkdownMaxCore
+      - package: WhisperKit
+        product: WhisperKit
+      - package: KeyboardShortcuts
+        product: KeyboardShortcuts
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.markdownmax.app
+        INFOPLIST_FILE: Sources/MarkdownMax/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/MarkdownMax/MarkdownMax.entitlements
+        SWIFT_VERSION: "5.10"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        PRODUCT_NAME: MarkdownMax
+        ENABLE_DEBUG_DYLIB: NO
+      configs:
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+    # SPM cannot use custom SYMROOT; copy the built .app next to the repo for easy access
+    postBuildScripts:
+      - name: Copy app to FinalBuild
+        basedOnDependencyAnalysis: false
+        script: |
+          DEST="${SRCROOT}/FinalBuild"
+          mkdir -p "${DEST}"
+          rm -rf "${DEST}/MarkdownMax.app"
+          cp -R "${BUILT_PRODUCTS_DIR}/MarkdownMax.app" "${DEST}/"
+          codesign --force --deep --sign - "${DEST}/MarkdownMax.app"
+          xattr -cr "${DEST}/MarkdownMax.app"
+          echo "Copied and signed ${DEST}/MarkdownMax.app"
+
+  # Test target — depends only on Core (no WhisperKit)
+  MarkdownMaxTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/MarkdownMaxTests
+    dependencies:
+      - target: MarkdownMaxCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.markdownmax.tests
+        SWIFT_VERSION: "5.10"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
