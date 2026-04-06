@@ -49,6 +49,7 @@ struct LogsView: View {
                     .listRowSeparator(.visible)
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
         }
     }

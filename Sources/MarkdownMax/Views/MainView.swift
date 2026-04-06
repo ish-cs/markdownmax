@@ -7,38 +7,76 @@ struct MainView: View {
     @Environment(\.openSettings) private var openSettings
     @State private var selectedID: Int64?
     @State private var showDeleteConfirmation = false
+    @FocusState private var searchFocused: Bool
+
+    private var selectionBinding: Binding<Int64?> {
+        Binding(
+            get: { selectedID },
+            set: { id in
+                guard let id, let rec = appState.recordings.first(where: { $0.id == id }) else { return }
+                appState.loadTranscript(for: rec)
+                selectedID = id
+            }
+        )
+    }
 
     var body: some View {
         NavigationSplitView {
-            Group {
-                if appState.recordings.isEmpty {
+            VStack(spacing: 0) {
+                // Search bar
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.caption)
+                    TextField("Search transcripts…", text: $appState.searchQuery)
+                        .textFieldStyle(.plain)
+                        .font(.callout)
+                        .focused($searchFocused)
+                        .onChange(of: appState.searchQuery) { _, _ in appState.performSearch() }
+                    if !appState.searchQuery.isEmpty {
+                        Button { appState.searchQuery = "" } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(.ultraThinMaterial)
+
+                Divider()
+
+                if !appState.searchQuery.isEmpty {
+                    searchResultsSidebar
+                } else if appState.recordings.isEmpty {
                     ContentUnavailableView("No Recordings",
                                            systemImage: "waveform.slash",
                                            description: Text("Click the menu bar icon to start recording."))
                 } else {
-                    List(appState.recordings, selection: $selectedID) { recording in
+                    List(appState.recordings, selection: selectionBinding) { recording in
                         RecordingSidebarRow(recording: recording)
                             .tag(recording.id)
                             .environmentObject(appState)
                     }
+                    .scrollContentBackground(.hidden)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .navigationTitle("")
             .toolbar(removing: .sidebarToggle)
             .toolbar {
+                if appState.audioRecorder.isRecording {
+                    ToolbarItem(placement: .primaryAction) {
+                        Text(appState.audioRecorder.duration.durationFormatted)
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(.red)
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: appState.toggleRecording) {
                         Image(systemName: appState.audioRecorder.isRecording ? "waveform.circle.fill" : "waveform.circle")
-                            .foregroundStyle(appState.audioRecorder.isRecording ? .green : .red)
+                            .foregroundStyle(appState.audioRecorder.isRecording ? .red : .primary)
                             .font(.title3)
                     }
                     .help(appState.audioRecorder.isRecording ? "Stop recording" : "Start recording")
-                }
-                ToolbarItem {
-                    Button(action: { openSettings() }) {
-                        Label("Settings", systemImage: "gear")
-                    }
-                    .help("Settings")
                 }
             }
         } detail: {
@@ -53,16 +91,26 @@ struct MainView: View {
                                        description: Text("Choose a recording from the list."))
             }
         }
-        .background(VisualEffectView(material: .underWindowBackground, blendingMode: .behindWindow))
-        .onAppear {
-            if selectedID == nil, let first = appState.recordings.first {
-                selectedID = first.id
-                appState.loadTranscript(for: first)
+        .background(
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .hidden()
+        )
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: { openSettings() }) {
+                    Image(systemName: "gear")
+                }
+                .help("Settings")
             }
         }
-        .onChange(of: selectedID) { _, id in
-            guard let id, let recording = appState.recordings.first(where: { $0.id == id }) else { return }
-            appState.loadTranscript(for: recording)
+        .background(VisualEffectView(material: .underWindowBackground, blendingMode: .behindWindow))
+        .toolbarBackground(.ultraThinMaterial, for: .windowToolbar)
+        .onAppear {
+            if selectedID == nil, let first = appState.recordings.first {
+                appState.loadTranscript(for: first)
+                selectedID = first.id
+            }
         }
         .onChange(of: appState.selectedRecording?.id) { _, id in
             guard let id, id != selectedID else { return }
@@ -89,6 +137,45 @@ struct MainView: View {
         let next = appState.recordings.first(where: { $0.id != id })
         selectedID = next?.id
         appState.deleteRecording(recording)
+    }
+
+    private var searchResultsSidebar: some View {
+        Group {
+            if appState.searchResults.isEmpty {
+                ContentUnavailableView.search(text: appState.searchQuery)
+            } else {
+                List(Array(appState.searchResults.enumerated()), id: \.offset, selection: $selectedID) { _, result in
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let rec = appState.recordings.first(where: { $0.id == result.recordingID }) {
+                            Text(rec.displayName)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(result.text)
+                            .font(.callout)
+                            .lineLimit(2)
+                        Text(formatTime(result.startTime))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .monospacedDigit()
+                    }
+                    .tag(result.recordingID)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectedID = result.recordingID
+                        if let rec = appState.recordings.first(where: { $0.id == result.recordingID }) {
+                            appState.loadTranscript(for: rec)
+                        }
+                    }
+                }
+                .scrollContentBackground(.hidden)
+            }
+        }
+    }
+
+    private func formatTime(_ s: Double) -> String {
+        let m = Int(s) / 60; let sec = Int(s) % 60
+        return String(format: "%d:%02d", m, sec)
     }
 
 }
@@ -195,22 +282,6 @@ struct RecordingDetailView: View {
         segments.first { $0.startTime <= player.currentTime && player.currentTime < $0.endTime }
     }
 
-    private var highlightedTranscript: AttributedString {
-        var result = AttributedString()
-
-        for (i, segment) in segments.enumerated() {
-            var part = AttributedString(segment.text)
-            if segment.id == activeSegment?.id {
-                part.backgroundColor = Color.accentColor.opacity(0.25)
-            }
-            result += part
-            if i < segments.count - 1 {
-                result += AttributedString(" ")
-            }
-        }
-        return result
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -233,6 +304,14 @@ struct RecordingDetailView: View {
                     Text(recording.durationFormatted).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button {
+                    appState.showTimestamps.toggle()
+                } label: {
+                    Image(systemName: "timer")
+                        .opacity(appState.showTimestamps ? 1 : 0.35)
+                }
+                .buttonStyle(.bordered)
+                .help(appState.showTimestamps ? "Hide timestamps" : "Show timestamps")
                 if !fullText.isEmpty {
                     Button {
                         NSPasteboard.general.clearContents()
@@ -246,7 +325,7 @@ struct RecordingDetailView: View {
                 }
             }
             .padding(16)
-            .background(VisualEffectView(material: .headerView, blendingMode: .behindWindow))
+            .background(VisualEffectView(material: .headerView, blendingMode: .withinWindow))
 
             Divider()
 
@@ -259,7 +338,6 @@ struct RecordingDetailView: View {
             contentBody
         }
         .onAppear {
-            appState.loadTranscript(for: recording)
             player.load(url: URL(fileURLWithPath: recording.filePath))
         }
         .onDisappear { player.stop() }
@@ -320,31 +398,49 @@ struct RecordingDetailView: View {
             if segments.isEmpty {
                 ContentUnavailableView("No Transcript", systemImage: "doc.text")
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(recording.dateFormatted)
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                        Text(highlightedTranscript)
-                            .font(.body)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                TranscriptTextView(
+                    segments: segments,
+                    activeSegmentID: activeSegment?.id,
+                    showTimestamps: appState.showTimestamps,
+                    onSeek: { time in
+                        player.seek(to: time)
+                        if !player.isPlaying { player.togglePlayback() }
                     }
-                    .padding(16)
-                }
+                )
             }
         case .transcribing:
-            VStack(spacing: 12) {
-                Text("Transcribing…").foregroundStyle(.secondary)
-                ProgressView(value: appState.transcriptionService.progress)
-                    .progressViewStyle(.linear)
-                    .frame(maxWidth: 280)
-                if !appState.transcriptionService.currentSegmentText.isEmpty {
-                    Text(appState.transcriptionService.currentSegmentText)
-                        .foregroundStyle(.tertiary)
-                        .font(.callout)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
+            TimelineView(.periodic(from: Date(), by: 1)) { _ in
+                let progress = appState.transcriptionService.progress
+                let elapsed = appState.transcriptionService.transcriptionStartDate
+                    .map { Date().timeIntervalSince($0) } ?? 0
+                let remaining: TimeInterval? = progress > 0.05
+                    ? (elapsed / progress) * (1 - progress)
+                    : nil
+
+                VStack(spacing: 12) {
+                    Text("Transcribing…").foregroundStyle(.secondary)
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                        .frame(maxWidth: 280)
+                    HStack(spacing: 16) {
+                        Label(elapsed.durationFormatted, systemImage: "timer")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                        if let remaining {
+                            Label("\(remaining.durationFormatted) left", systemImage: "hourglass")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                    }
+                    if !appState.transcriptionService.currentSegmentText.isEmpty {
+                        Text(appState.transcriptionService.currentSegmentText)
+                            .foregroundStyle(.tertiary)
+                            .font(.callout)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 40)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -23,6 +23,7 @@ final class TranscriptionService: ObservableObject {
     @Published private(set) var progress: Double = 0
     @Published private(set) var isTranscribing = false
     @Published private(set) var currentSegmentText: String = ""
+    @Published private(set) var transcriptionStartDate: Date? = nil
 
     private var whisper: WhisperKit?
     private var loadedModelName: String?
@@ -53,7 +54,7 @@ final class TranscriptionService: ObservableObject {
     // MARK: - Transcription
 
     /// Transcribes the audio file at `audioURL` and returns segments with timestamps.
-    func transcribe(audioURL: URL, onSegment: ((TranscriptSegment) -> Void)? = nil) async throws -> [TranscriptSegment] {
+    func transcribe(audioURL: URL) async throws -> [TranscriptSegment] {
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
             throw TranscriptionError.fileNotFound(audioURL)
         }
@@ -64,10 +65,12 @@ final class TranscriptionService: ObservableObject {
         isTranscribing = true
         progress = 0
         currentSegmentText = ""
+        transcriptionStartDate = Date()
         defer {
             isTranscribing = false
             progress = 1.0
             currentSegmentText = ""
+            transcriptionStartDate = nil
         }
 
         let options = DecodingOptions(
@@ -111,7 +114,6 @@ final class TranscriptionService: ObservableObject {
                 )
                 segments.append(segment)
                 currentSegmentText = trimmed
-                onSegment?(segment)
             }
         }
         return segments

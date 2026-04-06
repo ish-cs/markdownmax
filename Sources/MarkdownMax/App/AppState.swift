@@ -16,6 +16,7 @@ final class AppState: ObservableObject {
     @Published var showTranscriptWindow: Bool = false
     @Published var alertMessage: String?
     @Published var showAlert: Bool = false
+    @Published var showTimestamps: Bool = true
 
     // MARK: - Services
     let audioRecorder = AudioRecorder()
@@ -217,18 +218,7 @@ final class AppState: ObservableObject {
             await loadRecordings()
 
             try await transcriptionService.loadModel(activeModel.filePath, modelName: activeModel.modelName.rawValue)
-            let segments = try await transcriptionService.transcribe(audioURL: url) { [weak self] segment in
-                Task { @MainActor [weak self] in
-                    guard let self, self.selectedRecording?.id == id else { return }
-                    let t = Transcript(id: Int64(self.transcriptSegments.count),
-                                       recordingID: id,
-                                       text: segment.text,
-                                       confidenceScore: segment.confidence,
-                                       startTime: segment.startTime,
-                                       endTime: segment.endTime)
-                    self.transcriptSegments.append(t)
-                }
-            }
+            let segments = try await transcriptionService.transcribe(audioURL: url)
             appLog("Transcription complete. \(segments.count) segment(s).")
 
             try db.insertTranscripts(segments, forRecording: id)
@@ -253,15 +243,9 @@ final class AppState: ObservableObject {
 
     func loadTranscript(for recording: Recording) {
         selectedRecording = recording
-        Task {
-            guard let db else { return }
-            do {
-                transcriptSegments = try db.fetchTranscripts(forRecording: recording.id)
-                showTranscriptWindow = true
-            } catch {
-                presentAlert(error.localizedDescription)
-            }
-        }
+        guard let db else { return }
+        transcriptSegments = (try? db.fetchTranscripts(forRecording: recording.id)) ?? []
+        showTranscriptWindow = true
     }
 
     // MARK: - Search

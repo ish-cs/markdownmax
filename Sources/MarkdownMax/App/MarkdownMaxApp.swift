@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import KeyboardShortcuts
 
@@ -16,6 +17,7 @@ struct MarkdownMaxApp: App {
             MainView()
                 .environmentObject(appState)
                 .onAppear { appDelegate.setup(appState: appState) }
+                .background(VisualEffectView(material: .sidebar, blendingMode: .behindWindow).ignoresSafeArea())
         }
         .defaultSize(width: 900, height: 600)
         .commands {
@@ -26,18 +28,21 @@ struct MarkdownMaxApp: App {
             TranscriptView()
                 .environmentObject(appState)
                 .frame(minWidth: 600, minHeight: 400)
+                .background(VisualEffectView(material: .sidebar, blendingMode: .behindWindow).ignoresSafeArea())
         }
         .defaultSize(width: 700, height: 500)
 
         Window("Logs", id: "logs") {
             LogsView()
                 .frame(minWidth: 600, minHeight: 300)
+                .background(VisualEffectView(material: .sidebar, blendingMode: .behindWindow).ignoresSafeArea())
         }
         .defaultSize(width: 700, height: 450)
 
         Settings {
             SettingsView()
                 .environmentObject(appState)
+                .background(VisualEffectView(material: .sidebar, blendingMode: .behindWindow).ignoresSafeArea())
         }
     }
 }
@@ -81,3 +86,4 @@ extension Notification.Name {
     static let toggleRecordingShortcut = Notification.Name("toggleRecordingShortcut")
     static let openLastTranscriptShortcut = Notification.Name("openLastTranscriptShortcut")
 }
+
