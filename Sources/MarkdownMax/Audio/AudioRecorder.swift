@@ -25,6 +25,11 @@ final class AudioRecorder: ObservableObject {
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var peakLevel: Float = 0  // 0–1 for UI meter
 
+    /// Native microphone sample rate — available after startRecording()
+    private(set) var nativeSampleRate: Double = 48000
+    /// Called with raw Float32 samples at nativeSampleRate (non-main thread)
+    var sampleCallback: (([Float]) -> Void)?
+
     private let engine = AVAudioEngine()
     private var audioFile: AVAudioFile?
     private var currentRecordingURL: URL?
@@ -72,6 +77,7 @@ final class AudioRecorder: ObservableObject {
 
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
+        nativeSampleRate = inputFormat.sampleRate
 
         // Target: 16kHz mono (optimal for Whisper); record at native rate, we'll resample on export
         // Actually record at native rate and let WhisperKit handle resampling
@@ -117,6 +123,12 @@ final class AudioRecorder: ObservableObject {
                     }
                 }
                 Task { @MainActor in self.peakLevel = min(peak, 1.0) }
+
+                // Feed raw samples to live transcription (non-main thread OK)
+                if let cb = self.sampleCallback {
+                    let samples = Array(UnsafeBufferPointer(start: channelData, count: frameCount))
+                    cb(samples)
+                }
             }
         }
 
@@ -168,6 +180,7 @@ final class AudioRecorder: ObservableObject {
         peakLevel = 0
         currentRecordingURL = nil
         startTime = nil
+        sampleCallback = nil
 
         return (url: url, duration: elapsed, waveform: waveformData)
     }

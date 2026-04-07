@@ -17,10 +17,13 @@ final class AppState: ObservableObject {
     @Published var alertMessage: String?
     @Published var showAlert: Bool = false
     @Published var showTimestamps: Bool = true
+    @AppStorage("autoOpenWindowOnRecord") var autoOpenWindowOnRecord: Bool = true
+    @AppStorage("liveTranscriptionEnabled") var liveTranscriptionEnabled: Bool = true
 
     // MARK: - Services
     let audioRecorder = AudioRecorder()
     let transcriptionService = TranscriptionService()
+    let liveTranscriptionService = LiveTranscriptionService()
     let modelDownloadManager = ModelDownloadManager()
     let exportService = ExportService()
 
@@ -44,6 +47,9 @@ final class AppState: ObservableObject {
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
         modelDownloadManager.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        liveTranscriptionService.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
         Task { await bootstrap() }
@@ -153,11 +159,35 @@ final class AppState: ObservableObject {
     // MARK: - Recording flow
 
     func startRecording() {
+        if autoOpenWindowOnRecord {
+            NSApp.activate(ignoringOtherApps: true)
+            for window in NSApp.windows where window.title == "MarkdownMax" {
+                window.makeKeyAndOrderFront(nil)
+                break
+            }
+        }
+        guard !audioRecorder.isRecording else { return }
         Task {
             do {
                 appLog("Starting recording…")
+
+                // Start audio first — user sees indicator immediately
                 _ = try await audioRecorder.startRecording()
                 appLog("Recording started.")
+
+                // Load model and wire live transcription in the background
+                guard liveTranscriptionEnabled else { return }
+                Task {
+                    guard let model = activeModel else { return }
+                    try? await transcriptionService.loadModel(model.filePath, modelName: model.modelName.rawValue)
+                    guard audioRecorder.isRecording, let whisper = transcriptionService.whisper else { return }
+                    let sampleRate = audioRecorder.nativeSampleRate
+                    liveTranscriptionService.start(whisper: whisper, inputSampleRate: sampleRate)
+                    audioRecorder.sampleCallback = { [weak self] samples in
+                        self?.liveTranscriptionService.appendSamples(samples)
+                    }
+                    appLog("Live transcription started.")
+                }
             } catch {
                 appLog("Failed to start recording: \(error.localizedDescription)", .error)
                 presentAlert(error.localizedDescription)
@@ -171,6 +201,11 @@ final class AppState: ObservableObject {
                 appLog("Stopping recording…")
                 let result = try audioRecorder.stopRecording()
                 appLog("Recording stopped. Duration: \(String(format: "%.1f", result.duration))s, file: \(result.url.lastPathComponent)")
+
+                // Stop live transcription and flush remaining audio
+                await liveTranscriptionService.stop()
+                let liveSegments = liveTranscriptionEnabled ? liveTranscriptionService.confirmedSegments : []
+
                 guard let db else { return }
                 let id = try db.insertRecording(
                     filename: result.url.lastPathComponent,
@@ -178,13 +213,27 @@ final class AppState: ObservableObject {
                     duration: result.duration
                 )
                 try db.updateRecordingWaveform(id, waveformData: result.waveform)
-                await loadRecordings()
-                // Auto-select the new recording
-                if let recording = recordings.first(where: { $0.id == id }) {
-                    selectedRecording = recording
-                    transcriptSegments = []
+
+                if !liveSegments.isEmpty {
+                    // Use live segments — no full Whisper pass needed
+                    appLog("Using \(liveSegments.count) live segment(s) from live transcription.")
+                    try db.insertTranscripts(liveSegments, forRecording: id)
+                    try db.updateRecordingStatus(id, status: .complete,
+                                                 model: activeModel?.modelName.rawValue,
+                                                 duration: nil)
+                    await loadRecordings()
+                    if let recording = recordings.first(where: { $0.id == id }) {
+                        loadTranscript(for: recording)
+                    }
+                } else {
+                    // Fallback: no live segments, run full Whisper pass
+                    await loadRecordings()
+                    if let recording = recordings.first(where: { $0.id == id }) {
+                        selectedRecording = recording
+                        transcriptSegments = []
+                    }
+                    await transcribeRecording(id: id, url: result.url)
                 }
-                await transcribeRecording(id: id, url: result.url)
             } catch {
                 appLog("Failed to stop recording: \(error.localizedDescription)", .error)
                 presentAlert(error.localizedDescription)
@@ -218,7 +267,8 @@ final class AppState: ObservableObject {
             await loadRecordings()
 
             try await transcriptionService.loadModel(activeModel.filePath, modelName: activeModel.modelName.rawValue)
-            let segments = try await transcriptionService.transcribe(audioURL: url)
+            let duration = recordings.first(where: { $0.id == id })?.durationSeconds
+            let segments = try await transcriptionService.transcribe(audioURL: url, audioDuration: duration)
             appLog("Transcription complete. \(segments.count) segment(s).")
 
             try db.insertTranscripts(segments, forRecording: id)

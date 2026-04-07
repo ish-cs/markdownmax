@@ -8,22 +8,49 @@ struct SettingsView: View {
 
     var body: some View {
         TabView {
+            GeneralTab()
+                .environmentObject(appState)
+                .tabItem { Label("General", systemImage: "gearshape") }
+                .tag(0)
+
             ModelsTab()
                 .environmentObject(appState)
                 .tabItem { Label("Models", systemImage: "cube.box") }
-                .tag(0)
+                .tag(1)
 
             ShortcutsTab()
                 .tabItem { Label("Shortcuts", systemImage: "keyboard") }
-                .tag(1)
+                .tag(2)
 
             StorageTab()
                 .environmentObject(appState)
                 .tabItem { Label("Storage", systemImage: "internaldrive") }
-                .tag(2)
+                .tag(3)
         }
         .frame(width: 520, height: 360)
         .background(VisualEffectView(material: .headerView, blendingMode: .behindWindow))
+    }
+}
+
+// MARK: - General tab
+
+struct GeneralTab: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Live transcription", isOn: $appState.liveTranscriptionEnabled)
+                Toggle("Open window when recording starts", isOn: $appState.autoOpenWindowOnRecord)
+                    .disabled(!appState.liveTranscriptionEnabled)
+            } footer: {
+                Text("Live transcription shows text as you speak. When off, transcription runs after you stop recording.")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
+        }
+        .formStyle(.grouped)
+        .padding(20)
     }
 }
 
@@ -33,30 +60,30 @@ struct ModelsTab: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Installed Models")
-                .font(.headline)
-                .padding(.top, 4)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Installed Models")
+                    .font(.headline)
+                    .padding(.top, 4)
 
-            ForEach(WhisperModelSize.allCases, id: \.self) { model in
-                ModelManagementRow(model: model)
-                    .environmentObject(appState)
-            }
-
-            if let active = appState.activeModel {
-                Divider()
-                HStack {
-                    Text("Active model:")
-                        .foregroundStyle(.secondary)
-                    Text(active.modelName.rawValue.capitalized)
-                        .bold()
+                ForEach(WhisperModelSize.allCases, id: \.self) { model in
+                    ModelManagementRow(model: model)
+                        .environmentObject(appState)
                 }
-                .font(.callout)
-            }
 
-            Spacer()
+                if let active = appState.activeModel {
+                    Divider()
+                    HStack {
+                        Text("Active model:")
+                            .foregroundStyle(.secondary)
+                        Text(active.modelName.displayLabel)
+                            .bold()
+                    }
+                    .font(.callout)
+                }
+            }
+            .padding(20)
         }
-        .padding(20)
     }
 }
 
@@ -75,12 +102,21 @@ struct ModelManagementRow: View {
     var body: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(model.rawValue.capitalized)
+                HStack(spacing: 6) {
+                    Text(model.displayLabel)
                         .font(.callout.bold())
                     Text(model.sizeFormatted)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if model == .largeV3Turbo {
+                        Text("Recommended")
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor.opacity(0.15))
+                            .foregroundStyle(Color.accentColor)
+                            .clipShape(Capsule())
+                    }
                 }
                 Text("WER \(model.werPercent) · \(model.speedDescription)")
                     .font(.caption)
@@ -131,6 +167,7 @@ struct ModelManagementRow: View {
         .padding(.vertical, 8)
         .background(VisualEffectView(material: .headerView, blendingMode: .behindWindow).opacity(0.7))
         .cornerRadius(8)
+        .help(model.hoverDetail)
     }
 }
 

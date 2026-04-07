@@ -13,7 +13,9 @@ struct MainView: View {
         Binding(
             get: { selectedID },
             set: { id in
-                guard let id, let rec = appState.recordings.first(where: { $0.id == id }) else { return }
+                guard let id else { return }
+                if id == -1 { selectedID = -1; return }  // live recording row
+                guard let rec = appState.recordings.first(where: { $0.id == id }) else { return }
                 appState.loadTranscript(for: rec)
                 selectedID = id
             }
@@ -46,15 +48,29 @@ struct MainView: View {
 
                 if !appState.searchQuery.isEmpty {
                     searchResultsSidebar
-                } else if appState.recordings.isEmpty {
+                } else if appState.recordings.isEmpty && !appState.audioRecorder.isRecording {
                     ContentUnavailableView("No Recordings",
                                            systemImage: "waveform.slash",
                                            description: Text("Click the menu bar icon to start recording."))
                 } else {
-                    List(appState.recordings, selection: selectionBinding) { recording in
-                        RecordingSidebarRow(recording: recording)
-                            .tag(recording.id)
-                            .environmentObject(appState)
+                    List(selection: selectionBinding) {
+                        if appState.audioRecorder.isRecording {
+                            HStack(spacing: 8) {
+                                Circle().fill(.red).frame(width: 8, height: 8)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Recording…").font(.callout)
+                                    Text(appState.audioRecorder.duration.durationFormatted)
+                                        .font(.caption).foregroundStyle(.red).monospacedDigit()
+                                }
+                            }
+                            .tag(Int64(-1))
+                            .listRowBackground(Color.red.opacity(0.08))
+                        }
+                        ForEach(appState.recordings) { recording in
+                            RecordingSidebarRow(recording: recording)
+                                .tag(recording.id)
+                                .environmentObject(appState)
+                        }
                     }
                     .scrollContentBackground(.hidden)
                 }
@@ -80,7 +96,10 @@ struct MainView: View {
                 }
             }
         } detail: {
-            if let id = selectedID,
+            if selectedID == -1 {
+                LiveRecordingView()
+                    .environmentObject(appState)
+            } else if let id = selectedID,
                let recording = appState.recordings.first(where: { $0.id == id }) {
                 RecordingDetailView(recording: recording)
                     .environmentObject(appState)
@@ -112,8 +131,12 @@ struct MainView: View {
                 selectedID = first.id
             }
         }
+        .onChange(of: appState.audioRecorder.isRecording) { _, isRecording in
+            if isRecording { selectedID = -1 }
+        }
         .onChange(of: appState.selectedRecording?.id) { _, id in
-            guard let id, id != selectedID else { return }
+            // Auto-switch only when viewing live view (selectedID == -1)
+            guard let id, selectedID == -1 || selectedID == nil else { return }
             selectedID = id
         }
         .onDeleteCommand {
@@ -135,7 +158,12 @@ struct MainView: View {
         guard let id = selectedID,
               let recording = appState.recordings.first(where: { $0.id == id }) else { return }
         let next = appState.recordings.first(where: { $0.id != id })
-        selectedID = next?.id
+        if let next {
+            appState.loadTranscript(for: next)
+            selectedID = next.id
+        } else {
+            selectedID = nil
+        }
         appState.deleteRecording(recording)
     }
 
@@ -410,12 +438,12 @@ struct RecordingDetailView: View {
             }
         case .transcribing:
             TimelineView(.periodic(from: Date(), by: 1)) { _ in
-                let progress = appState.transcriptionService.progress
-                let elapsed = appState.transcriptionService.transcriptionStartDate
-                    .map { Date().timeIntervalSince($0) } ?? 0
-                let remaining: TimeInterval? = progress > 0.05
-                    ? (elapsed / progress) * (1 - progress)
-                    : nil
+                let svc = appState.transcriptionService
+                let progress = svc.progress
+                let elapsed = svc.transcriptionStartDate.map { Date().timeIntervalSince($0) } ?? 0
+                // Prefer service's RTF-based estimate; fall back to elapsed-ratio formula
+                let remaining: TimeInterval? = svc.estimatedRemainingSeconds
+                    ?? (progress > 0.02 && elapsed > 3 ? (elapsed / progress) * (1 - progress) : nil)
 
                 VStack(spacing: 12) {
                     Text("Transcribing…").foregroundStyle(.secondary)
@@ -434,8 +462,8 @@ struct RecordingDetailView: View {
                                 .monospacedDigit()
                         }
                     }
-                    if !appState.transcriptionService.currentSegmentText.isEmpty {
-                        Text(appState.transcriptionService.currentSegmentText)
+                    if !svc.currentSegmentText.isEmpty {
+                        Text(svc.currentSegmentText)
                             .foregroundStyle(.tertiary)
                             .font(.callout)
                             .multilineTextAlignment(.center)
@@ -463,5 +491,123 @@ struct RecordingDetailView: View {
     private func formatTime(_ t: TimeInterval) -> String {
         let m = Int(t) / 60; let s = Int(t) % 60
         return String(format: "%d:%02d", m, s)
+    }
+}
+
+// MARK: - Live Recording View
+
+struct LiveRecordingView: View {
+    @EnvironmentObject var appState: AppState
+
+    private var live: LiveTranscriptionService { appState.liveTranscriptionService }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(.red)
+                    .frame(width: 8, height: 8)
+                    .opacity(0.9)
+                Text("Recording")
+                    .font(.headline)
+                Text(appState.audioRecorder.duration.durationFormatted)
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.red)
+                Spacer()
+                if !live.isActive {
+                    Label("No model loaded", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(16)
+            .background(VisualEffectView(material: .headerView, blendingMode: .withinWindow))
+
+            Divider()
+
+            if !appState.liveTranscriptionEnabled {
+                VStack(spacing: 8) {
+                    Image(systemName: "waveform.slash")
+                        .font(.largeTitle)
+                        .foregroundStyle(.tertiary)
+                    Text("Live transcription off")
+                        .font(.callout.bold())
+                        .foregroundStyle(.secondary)
+                    Text("Transcript will load after recording ends.")
+                        .font(.callout)
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if live.confirmedSegments.isEmpty && !live.isSpeaking {
+                VStack(spacing: 8) {
+                    Image(systemName: "waveform")
+                        .font(.largeTitle)
+                        .foregroundStyle(.tertiary)
+                    Text(live.isActive ? "Listening…" : "Transcription unavailable\nNo model loaded")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(live.confirmedSegments.enumerated()), id: \.offset) { _, seg in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(formatSec(seg.startTime))
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(.tertiary)
+                                        .frame(width: 36, alignment: .trailing)
+                                    Text(seg.text)
+                                        .font(.body)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .padding(.vertical, 3)
+                            }
+
+                            if live.isTranscribingChunk || live.isSpeaking {
+                                HStack(spacing: 8) {
+                                    Text("  ").frame(width: 36)
+                                    if live.isTranscribingChunk {
+                                        HStack(spacing: 6) {
+                                            ProgressView().scaleEffect(0.6).frame(width: 14, height: 14)
+                                            Text("Transcribing…")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    } else {
+                                        HStack(spacing: 4) {
+                                            ForEach(0..<3) { i in
+                                                Circle()
+                                                    .fill(.secondary)
+                                                    .frame(width: 5, height: 5)
+                                                    .animation(.easeInOut(duration: 0.6).repeatForever().delay(Double(i) * 0.2), value: live.isSpeaking)
+                                            }
+                                        }
+                                    }
+                                }
+                                .padding(.vertical, 6)
+                                .id("speaking")
+                            }
+                        }
+                        .textSelection(.enabled)
+                        .padding(16)
+                    }
+                    .onChange(of: live.isSpeaking) { _, _ in
+                        withAnimation { proxy.scrollTo("speaking") }
+                    }
+                    .onChange(of: live.confirmedSegments.count) { _, _ in
+                        withAnimation { proxy.scrollTo("speaking") }
+                    }
+                }
+            }
+        }
+    }
+
+    private func formatSec(_ s: Double) -> String {
+        let m = Int(s) / 60; let sec = Int(s) % 60
+        return String(format: "%d:%02d", m, sec)
     }
 }

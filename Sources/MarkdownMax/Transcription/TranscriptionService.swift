@@ -24,8 +24,9 @@ final class TranscriptionService: ObservableObject {
     @Published private(set) var isTranscribing = false
     @Published private(set) var currentSegmentText: String = ""
     @Published private(set) var transcriptionStartDate: Date? = nil
+    @Published private(set) var estimatedRemainingSeconds: TimeInterval? = nil
 
-    private var whisper: WhisperKit?
+    private(set) var whisper: WhisperKit?
     private var loadedModelName: String?
 
     // MARK: - Model Loading
@@ -54,7 +55,7 @@ final class TranscriptionService: ObservableObject {
     // MARK: - Transcription
 
     /// Transcribes the audio file at `audioURL` and returns segments with timestamps.
-    func transcribe(audioURL: URL) async throws -> [TranscriptSegment] {
+    func transcribe(audioURL: URL, audioDuration: TimeInterval? = nil) async throws -> [TranscriptSegment] {
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
             throw TranscriptionError.fileNotFound(audioURL)
         }
@@ -66,11 +67,13 @@ final class TranscriptionService: ObservableObject {
         progress = 0
         currentSegmentText = ""
         transcriptionStartDate = Date()
+        estimatedRemainingSeconds = nil
         defer {
             isTranscribing = false
             progress = 1.0
             currentSegmentText = ""
             transcriptionStartDate = nil
+            estimatedRemainingSeconds = nil
         }
 
         let options = DecodingOptions(
@@ -83,13 +86,33 @@ final class TranscriptionService: ObservableObject {
             wordTimestamps: false
         )
 
-        // Callback: ((TranscriptionProgress) -> Bool?)? — return nil to continue
+        // windowId = number of fully-completed 30s windows so far.
+        // We compute RTF ourselves from wall-clock elapsed / audio processed,
+        // which is accurate as soon as at least one window finishes.
+        let startDate = Date()
         let progressCallback: TranscriptionCallback = { [weak self] prog in
-            let loops = prog.timings.totalDecodingLoops
+            let elapsedWall = -startDate.timeIntervalSinceNow
+            let windowsDone = Double(prog.windowId)   // completed 30s windows
+            let loops       = prog.timings.totalDecodingLoops
+
             Task { @MainActor in
-                self?.progress = min(loops / 100.0, 0.99)
+                if let total = audioDuration, total > 0 {
+                    let totalWindows = max(1.0, ceil(total / 30.0))
+                    // Smooth progress: completed windows + rough intra-window loop fraction
+                    let intra = totalWindows > 1 ? min(loops / 50.0, 0.99) / totalWindows : min(loops / 50.0, 0.99)
+                    self?.progress = min(windowsDone / totalWindows + intra, 0.99)
+
+                    // RTF from actual wall clock; only reliable after ≥1 window done
+                    if windowsDone >= 1, elapsedWall > 0 {
+                        let processedAudio = windowsDone * 30.0
+                        let rtf = elapsedWall / processedAudio
+                        self?.estimatedRemainingSeconds = max(0, (total - processedAudio) * rtf)
+                    }
+                } else {
+                    self?.progress = min(loops / 100.0, 0.99)
+                }
             }
-            return nil  // nil = continue transcribing
+            return nil
         }
 
         let results: [TranscriptionResult] = try await whisper.transcribe(
