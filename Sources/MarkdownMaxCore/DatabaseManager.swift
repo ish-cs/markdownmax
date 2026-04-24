@@ -29,7 +29,7 @@ public final class DatabaseManager {
             dbURL = url
         } else {
             let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("MarkdownMax", isDirectory: true)
+                .appendingPathComponent("StudentMax", isDirectory: true)
             try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
             dbURL = support.appendingPathComponent("database.sqlite")
         }
@@ -95,6 +95,14 @@ public final class DatabaseManager {
             FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS bookmarks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recording_id INTEGER NOT NULL,
+            time REAL NOT NULL,
+            label TEXT,
+            FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
+        );
+
         CREATE VIRTUAL TABLE IF NOT EXISTS transcript_search USING fts5(
             text,
             recording_id UNINDEXED,
@@ -125,8 +133,18 @@ public final class DatabaseManager {
     }
 
     private func migrate() {
-        // Add custom_name column for existing DBs (no-op if already exists)
+        // No-op if columns/tables already exist
         execute("ALTER TABLE recordings ADD COLUMN custom_name TEXT")
+        execute("ALTER TABLE recordings ADD COLUMN subject TEXT")
+        execute("""
+            CREATE TABLE IF NOT EXISTS bookmarks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recording_id INTEGER NOT NULL,
+                time REAL NOT NULL,
+                label TEXT,
+                FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
+            )
+        """)
     }
 
     // MARK: - Recordings
@@ -189,7 +207,7 @@ public final class DatabaseManager {
     public func fetchAllRecordings() throws -> [Recording] {
         let sql = """
         SELECT id, filename, file_path, duration_seconds, date_created,
-               waveform_data, transcribed_with_model, transcription_status, custom_name
+               waveform_data, transcribed_with_model, transcription_status, custom_name, subject
         FROM recordings ORDER BY date_created DESC
         """
         var stmt: OpaquePointer?
@@ -204,14 +222,73 @@ public final class DatabaseManager {
         return results
     }
 
+    /// Returns the single recording created today (local calendar day), if any.
+    public func fetchTodaysRecording() -> Recording? {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: Date())
+        guard let end = cal.date(byAdding: .day, value: 1, to: start) else { return nil }
+        let sql = """
+        SELECT id, filename, file_path, duration_seconds, date_created,
+               waveform_data, transcribed_with_model, transcription_status, custom_name, subject
+        FROM recordings
+        WHERE date_created >= ? AND date_created < ?
+        ORDER BY date_created ASC
+        LIMIT 1
+        """
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, iso8601(start), -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, iso8601(end), -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_ROW ? recordingFromStmt(stmt) : nil
+    }
+
     public func deleteRecording(_ id: Int64) throws {
         execute("DELETE FROM transcripts WHERE recording_id = \(id)")
         execute("DELETE FROM recordings WHERE id = \(id)")
     }
 
+    /// Deletes all recordings created before `date`. Returns file paths of deleted audio files.
+    @discardableResult
+    public func deleteRecordingsOlderThan(_ date: Date) throws -> [String] {
+        let sql = "SELECT id, file_path FROM recordings WHERE date_created < ?"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw DatabaseError.prepareFailed(dbError())
+        }
+        sqlite3_bind_text(stmt, 1, iso8601(date), -1, SQLITE_TRANSIENT)
+
+        var rows: [(id: Int64, path: String)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let id = sqlite3_column_int64(stmt, 0)
+            let path = String(cString: sqlite3_column_text(stmt, 1))
+            rows.append((id: id, path: path))
+        }
+
+        for row in rows {
+            execute("DELETE FROM recordings WHERE id = \(row.id)")
+            // transcripts cascade-delete via FK ON DELETE CASCADE
+        }
+        return rows.map(\.path)
+    }
+
     public func deleteTranscripts(forRecording id: Int64) {
         execute("DELETE FROM transcripts WHERE recording_id = \(id)")
         execute("DELETE FROM transcript_search WHERE recording_id = \(id)")
+    }
+
+    public func deleteTranscripts(forRecording id: Int64, startingFrom startTime: Double) {
+        execute("DELETE FROM transcripts WHERE recording_id = \(id) AND start_time >= \(startTime)")
+        execute("DELETE FROM transcript_search WHERE recording_id = \(id) AND start_time >= \(startTime)")
+    }
+
+    public func countTranscripts(forRecording id: Int64) -> Int {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM transcripts WHERE recording_id = \(id)", -1, &stmt, nil) == SQLITE_OK,
+              sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int(stmt, 0))
     }
 
     public func renameRecording(_ id: Int64, name: String) throws {
@@ -295,6 +372,60 @@ public final class DatabaseManager {
         return results
     }
 
+    // MARK: - Subject
+
+    public func updateRecordingSubject(_ id: Int64, subject: String?) throws {
+        let sql = "UPDATE recordings SET subject = ? WHERE id = ?"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw DatabaseError.prepareFailed(dbError())
+        }
+        if let s = subject { sqlite3_bind_text(stmt, 1, s, -1, SQLITE_TRANSIENT) } else { sqlite3_bind_null(stmt, 1) }
+        sqlite3_bind_int64(stmt, 2, id)
+        sqlite3_step(stmt)
+    }
+
+    // MARK: - Bookmarks
+
+    @discardableResult
+    public func insertBookmark(recordingID: Int64, time: Double, label: String? = nil) throws -> Int64 {
+        let sql = "INSERT INTO bookmarks (recording_id, time, label) VALUES (?, ?, ?)"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw DatabaseError.prepareFailed(dbError())
+        }
+        sqlite3_bind_int64(stmt, 1, recordingID)
+        sqlite3_bind_double(stmt, 2, time)
+        if let l = label { sqlite3_bind_text(stmt, 3, l, -1, SQLITE_TRANSIENT) } else { sqlite3_bind_null(stmt, 3) }
+        guard sqlite3_step(stmt) == SQLITE_DONE else { throw DatabaseError.insertFailed(dbError()) }
+        return sqlite3_last_insert_rowid(db)
+    }
+
+    public func fetchBookmarks(forRecording id: Int64) throws -> [Bookmark] {
+        let sql = "SELECT id, recording_id, time, label FROM bookmarks WHERE recording_id = ? ORDER BY time"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw DatabaseError.prepareFailed(dbError())
+        }
+        sqlite3_bind_int64(stmt, 1, id)
+        var results: [Bookmark] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let bId = sqlite3_column_int64(stmt, 0)
+            let rId = sqlite3_column_int64(stmt, 1)
+            let time = sqlite3_column_double(stmt, 2)
+            let label = sqlite3_column_type(stmt, 3) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 3)) : nil
+            results.append(Bookmark(id: bId, recordingID: rId, time: time, label: label))
+        }
+        return results
+    }
+
+    public func deleteBookmark(_ id: Int64) {
+        execute("DELETE FROM bookmarks WHERE id = \(id)")
+    }
+
     // MARK: - Models
 
     public func upsertModel(_ model: InstalledModel) throws {
@@ -324,7 +455,13 @@ public final class DatabaseManager {
 
     public func setActiveModel(_ name: WhisperModelSize) throws {
         execute("UPDATE installed_models SET is_active = 0")
-        execute("UPDATE installed_models SET is_active = 1, last_used = '\(iso8601(Date()))' WHERE model_name = '\(name.rawValue)'")
+        let sql = "UPDATE installed_models SET is_active = 1, last_used = ? WHERE model_name = ?"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        sqlite3_bind_text(stmt, 1, iso8601(Date()), -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, name.rawValue, -1, SQLITE_TRANSIENT)
+        sqlite3_step(stmt)
     }
 
     public func fetchInstalledModels() throws -> [InstalledModel] {
@@ -352,7 +489,11 @@ public final class DatabaseManager {
     }
 
     public func deleteModel(_ name: WhisperModelSize) {
-        execute("DELETE FROM installed_models WHERE model_name = '\(name.rawValue)'")
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "DELETE FROM installed_models WHERE model_name = ?", -1, &stmt, nil) == SQLITE_OK else { return }
+        sqlite3_bind_text(stmt, 1, name.rawValue, -1, SQLITE_TRANSIENT)
+        sqlite3_step(stmt)
     }
 
     // MARK: - Helpers
@@ -375,9 +516,10 @@ public final class DatabaseManager {
         let statusStr = String(cString: sqlite3_column_text(stmt, 7))
         let status = Recording.TranscriptionStatus(rawValue: statusStr) ?? .pending
         let customName = sqlite3_column_type(stmt, 8) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 8)) : nil
+        let subject = sqlite3_column_type(stmt, 9) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 9)) : nil
         return Recording(id: id, filename: filename, filePath: path, durationSeconds: duration,
                          dateCreated: date, waveformData: waveform, transcribedWithModel: model,
-                         transcriptionStatus: status, customName: customName)
+                         transcriptionStatus: status, customName: customName, subject: subject)
     }
 
     private func transcriptFromStmt(_ stmt: OpaquePointer?) -> Transcript {

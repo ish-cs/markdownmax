@@ -48,7 +48,7 @@ final class ModelDownloadManager: NSObject, ObservableObject {
 
     var modelsDirectory: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MarkdownMax/models", isDirectory: true)
+            .appendingPathComponent("StudentMax/models", isDirectory: true)
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         return support
     }

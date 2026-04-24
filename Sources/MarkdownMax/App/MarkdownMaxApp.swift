@@ -1,19 +1,20 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 import KeyboardShortcuts
 
 extension KeyboardShortcuts.Name {
-    static let toggleRecording = Self("toggleRecording", default: .init(.r, modifiers: [.command]))
-    static let openLastTranscript = Self("openLastTranscript", default: .init(.t, modifiers: [.command, .shift]))
+    static let toggleRecording = Self("toggleRecording", default: .init(.r, modifiers: [.command, .shift]))
+    static let addBookmark = Self("addBookmark", default: .init(.b, modifiers: [.command, .shift]))
 }
 
 @main
-struct MarkdownMaxApp: App {
+struct StudentMaxApp: App {
     @StateObject private var appState = AppState()
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        Window("MarkdownMax", id: "main") {
+        Window("StudentMax", id: "main") {
             MainView()
                 .environmentObject(appState)
                 .onAppear { appDelegate.setup(appState: appState) }
@@ -51,15 +52,25 @@ struct MarkdownMaxApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarController: StatusBarController?
+    private weak var appState: AppState?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
 
-        KeyboardShortcuts.onKeyUp(for: .toggleRecording) {
-            NotificationCenter.default.post(name: .toggleRecordingShortcut, object: nil)
+        KeyboardShortcuts.onKeyUp(for: .toggleRecording) { [weak self] in
+            guard let state = self?.appState else { return }
+            Task { @MainActor in
+                if state.audioRecorder.isRecording {
+                    state.stopRecording()
+                } else {
+                    state.startRecording()
+                }
+            }
         }
-        KeyboardShortcuts.onKeyUp(for: .openLastTranscript) {
-            NotificationCenter.default.post(name: .openLastTranscriptShortcut, object: nil)
+
+        KeyboardShortcuts.onKeyUp(for: .addBookmark) { [weak self] in
+            guard let state = self?.appState else { return }
+            Task { @MainActor in state.addBookmark() }
         }
 
         DispatchQueue.main.async {
@@ -71,6 +82,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        guard let state = appState else { return }
+        let sem = DispatchSemaphore(value: 0)
+        let task = Task {
+            await state.shutdownIfRecording()
+            sem.signal()
+        }
+        if sem.wait(timeout: .now() + 5) == .timedOut {
+            task.cancel()
+        }
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
@@ -78,12 +101,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func setup(appState: AppState) {
         guard statusBarController == nil else { return }
+        self.appState = appState
         statusBarController = StatusBarController(appState: appState)
     }
-}
 
-extension Notification.Name {
-    static let toggleRecordingShortcut = Notification.Name("toggleRecordingShortcut")
-    static let openLastTranscriptShortcut = Notification.Name("openLastTranscriptShortcut")
+    // MARK: - Launch at login
+
+    static var isLaunchAtLoginEnabled: Bool {
+        SMAppService.mainApp.status == .enabled
+    }
+
+    static func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            appLog("Launch-at-login toggle failed: \(error.localizedDescription)", .error)
+        }
+    }
 }
 

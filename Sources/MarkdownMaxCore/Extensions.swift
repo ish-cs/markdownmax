@@ -7,3 +7,10 @@ public extension TimeInterval {
         return String(format: "%d:%02d", m, s)
     }
 }
+
+public extension String {
+    /// Strips Whisper special tokens like `<|startoftranscript|>`, `<|en|>`, etc.
+    var strippingWhisperTokens: String {
+        replacing(#/<\|[^|>]*\|>/#, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}

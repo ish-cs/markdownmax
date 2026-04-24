@@ -124,10 +124,7 @@ final class TranscriptionService: ObservableObject {
         var segments: [TranscriptSegment] = []
         for result in results {
             for seg in result.segments {
-                let stripped = seg.text
-                    .replacing(#/<\|[^|>]*\|>/#, with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                let trimmed = stripped
+                let trimmed = seg.text.strippingWhisperTokens
                 guard !trimmed.isEmpty else { continue }
                 let segment = TranscriptSegment(
                     text: trimmed,

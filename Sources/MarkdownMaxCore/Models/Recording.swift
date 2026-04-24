@@ -10,10 +10,12 @@ public struct Recording: Identifiable, Equatable {
     public var transcribedWithModel: String?
     public var transcriptionStatus: TranscriptionStatus
     public var customName: String?
+    public var subject: String?
 
     public init(id: Int64, filename: String, filePath: String, durationSeconds: Double,
                 dateCreated: Date, waveformData: Data?, transcribedWithModel: String?,
-                transcriptionStatus: TranscriptionStatus, customName: String? = nil) {
+                transcriptionStatus: TranscriptionStatus, customName: String? = nil,
+                subject: String? = nil) {
         self.id = id
         self.filename = filename
         self.filePath = filePath
@@ -23,6 +25,7 @@ public struct Recording: Identifiable, Equatable {
         self.transcribedWithModel = transcribedWithModel
         self.transcriptionStatus = transcriptionStatus
         self.customName = customName
+        self.subject = subject
     }
 
     public enum TranscriptionStatus: String, Codable {

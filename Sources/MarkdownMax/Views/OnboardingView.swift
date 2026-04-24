@@ -12,9 +12,9 @@ struct OnboardingView: View {
             VStack(spacing: 8) {
                 Image(systemName: "waveform.circle.fill")
                     .font(.system(size: 52))
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(Color.mmGreen)
                     .symbolRenderingMode(.hierarchical)
-                Text("Welcome to MarkdownMax")
+                Text("Welcome to StudentMax")
                     .font(.title2.bold())
                 Text("Local, private transcription — no cloud required.")
                     .foregroundStyle(.secondary)
@@ -104,7 +104,7 @@ struct ModelOptionRow: View {
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
-                                .background(.blue)
+                                .background(Color.mmGreen)
                                 .cornerRadius(4)
                         }
                     }
@@ -117,7 +117,7 @@ struct ModelOptionRow: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(isSelected ? Color.blue.opacity(0.08) : Color.primary.opacity(0.04))
+            .background(isSelected ? Color.mmGreen.opacity(0.08) : Color.primary.opacity(0.04))
             .cornerRadius(8)
         }
         .buttonStyle(.plain)

@@ -18,13 +18,7 @@ public struct Transcript: Identifiable, Equatable {
     }
 
     public var timeRangeFormatted: String {
-        "\(formatTime(startTime)) → \(formatTime(endTime))"
-    }
-
-    private func formatTime(_ seconds: Double) -> String {
-        let m = Int(seconds) / 60
-        let s = Int(seconds) % 60
-        return String(format: "%d:%02d", m, s)
+        "\(startTime.durationFormatted) → \(endTime.durationFormatted)"
     }
 }
 

@@ -113,9 +113,20 @@ final class LiveTranscriptionService: ObservableObject {
     private let vadWindowSec: Double = 0.2                  // energy window
     private let silenceCommitSec: Double = 0.6              // silence → commit
     private let maxChunkSec: Double = 6.0                   // force commit
-    private let energyThreshold: Float = 0.008
+    private let energyThreshold: Float = 0.008              // VAD onset sensitivity
+    /// Minimum RMS for an entire chunk to be worth sending to Whisper.
+    /// Filters distant TV, HVAC, low ambient noise without stopping VAD detection.
+    private let minTranscribeRMS: Float = 0.02
 
     // MARK: - Public API
+
+    /// Removes and returns all confirmed segments, clearing the in-memory list.
+    /// Call after `stop()` to drain the final batch, or periodically to flush to DB.
+    func drainConfirmedSegments() -> [TranscriptSegment] {
+        let result = confirmedSegments
+        confirmedSegments = []
+        return result
+    }
 
     func start(whisper: WhisperKit, inputSampleRate: Double) {
         self.whisper = whisper
@@ -142,7 +153,7 @@ final class LiveTranscriptionService: ObservableObject {
 
         // Flush remaining uncommitted samples
         let remaining = sampleBuffer.drain()
-        if remaining.count >= sampleRate, let whisper {
+        if remaining.count >= sampleRate, whisper != nil {
             await transcribeAndCommit(samples: remaining,
                                       timeOffset: Double(sampleBuffer.committedCount) / Double(sampleRate))
         }
@@ -185,7 +196,7 @@ final class LiveTranscriptionService: ObservableObject {
             let chunkLen = speechStartSample.map { total - $0 } ?? 0
 
             // Commit if: silence long enough, or chunk too long
-            guard let speechStart = speechStartSample,
+            guard speechStartSample != nil,
                   lastSpeechSample > committed,
                   silenceLen >= silenceSamples || chunkLen >= maxChunkSamples
             else { continue }
@@ -204,6 +215,7 @@ final class LiveTranscriptionService: ObservableObject {
     // MARK: - Transcription
 
     private func transcribeAndCommit(samples: [Float], timeOffset: Double) async {
+        guard rms(samples) >= minTranscribeRMS else { return }  // too quiet — skip Whisper
         guard let whisper else { return }
         isTranscribingChunk = true
         defer { isTranscribingChunk = false }
@@ -219,9 +231,7 @@ final class LiveTranscriptionService: ObservableObject {
             let results = try await whisper.transcribe(audioArray: samples, decodeOptions: options)
             let newSegs: [TranscriptSegment] = results.flatMap { r in
                 r.segments.compactMap { seg in
-                    let clean = seg.text
-                        .replacing(#/<\|[^|>]*\|>/#, with: "")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let clean = seg.text.strippingWhisperTokens
                     guard !clean.isEmpty else { return nil }
                     return TranscriptSegment(
                         text: clean,

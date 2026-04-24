@@ -56,7 +56,7 @@ struct TranscriptTextView: NSViewRepresentable {
 
         for (i, seg) in segments.enumerated() {
             if showTimestamps {
-                let ts = formatTime(seg.startTime)
+                let ts = seg.startTime.durationFormatted
                 let chip = NSMutableAttributedString(string: ts + "  ")
                 let tsLen = (ts as NSString).length
                 chip.addAttributes([
@@ -99,11 +99,6 @@ struct TranscriptTextView: NSViewRepresentable {
                                   forCharacterRange: ranges[idx])
     }
 
-    private func formatTime(_ s: Double) -> String {
-        let m = Int(s) / 60; let sec = Int(s) % 60
-        return String(format: "%d:%02d", m, sec)
-    }
-
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onSeek: ((TimeInterval) -> Void)?
         var lastSegmentIDs: [Int64] = []
@@ -115,47 +110,6 @@ struct TranscriptTextView: NSViewRepresentable {
                   let ms = Int(url.host ?? "") else { return false }
             onSeek?(Double(ms) / 1000.0)
             return true
-        }
-    }
-}
-
-// MARK: - Flow layout for wrapping inline views
-
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 4
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? 0
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
-            if x + size.width > width, x > 0 {
-                y += rowHeight + spacing
-                x = 0
-                rowHeight = 0
-            }
-            rowHeight = max(rowHeight, size.height)
-            x += size.width + spacing
-        }
-        return CGSize(width: width, height: y + rowHeight)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX
-        var y = bounds.minY
-        var rowHeight: CGFloat = 0
-        for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
-            if x + size.width > bounds.maxX, x > bounds.minX {
-                y += rowHeight + spacing
-                x = bounds.minX
-                rowHeight = 0
-            }
-            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            rowHeight = max(rowHeight, size.height)
-            x += size.width + spacing
         }
     }
 }
