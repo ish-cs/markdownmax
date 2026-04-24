@@ -1,6 +1,7 @@
 import MarkdownMaxCore
 import Foundation
 import WhisperKit
+import SpeakerKit
 
 enum TranscriptionError: Error, LocalizedError {
     case noModelInstalled
@@ -28,6 +29,7 @@ final class TranscriptionService: ObservableObject {
 
     private(set) var whisper: WhisperKit?
     private var loadedModelName: String?
+    private var speakerKit: SpeakerKit?
 
     // MARK: - Model Loading
 
@@ -44,6 +46,14 @@ final class TranscriptionService: ObservableObject {
             loadedModelName = modelName
         } catch {
             throw TranscriptionError.modelLoadFailed(error.localizedDescription)
+        }
+
+        Task {
+            do {
+                speakerKit = try await SpeakerKit()
+            } catch {
+                // SpeakerKit unavailable; diarization will be skipped
+            }
         }
     }
 
@@ -136,6 +146,36 @@ final class TranscriptionService: ObservableObject {
                 currentSegmentText = trimmed
             }
         }
+
+        if let sk = speakerKit {
+            do {
+                let audioArray = try AudioProcessor.loadAudioAsFloatArray(fromPath: audioURL.path)
+                let diarization = try await sk.diarize(audioArray: audioArray)
+                let labeled = diarization.addSpeakerInfo(to: results, strategy: .segment)
+
+                var speakerByStart: [Double: String] = [:]
+                for speakerTurn in labeled {
+                    for seg in speakerTurn {
+                        if let id = seg.speaker.speakerId {
+                            let label = String(format: "SPEAKER_%02d", id)
+                            speakerByStart[Double(seg.startTime)] = label
+                        }
+                    }
+                }
+
+                for i in segments.indices {
+                    let t = segments[i].startTime
+                    if let speaker = speakerByStart[t] {
+                        segments[i].speaker = speaker
+                    } else if let match = speakerByStart.first(where: { abs($0.key - t) < 0.5 }) {
+                        segments[i].speaker = match.value
+                    }
+                }
+            } catch {
+                // Diarization failed; segments return with speaker = nil
+            }
+        }
+
         return segments
     }
 
