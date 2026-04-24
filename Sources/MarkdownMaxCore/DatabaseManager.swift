@@ -136,6 +136,7 @@ public final class DatabaseManager {
         // No-op if columns/tables already exist
         execute("ALTER TABLE recordings ADD COLUMN custom_name TEXT")
         execute("ALTER TABLE recordings ADD COLUMN subject TEXT")
+        execute("ALTER TABLE transcripts ADD COLUMN speaker TEXT")
         execute("""
             CREATE TABLE IF NOT EXISTS bookmarks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -307,7 +308,7 @@ public final class DatabaseManager {
 
     public func insertTranscripts(_ segments: [TranscriptSegment], forRecording recordingID: Int64) throws {
         execute("BEGIN TRANSACTION")
-        let sql = "INSERT INTO transcripts (recording_id, text, confidence_score, start_time, end_time) VALUES (?, ?, ?, ?, ?)"
+        let sql = "INSERT INTO transcripts (recording_id, text, confidence_score, start_time, end_time, speaker) VALUES (?, ?, ?, ?, ?, ?)"
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -321,6 +322,7 @@ public final class DatabaseManager {
             if let c = seg.confidence { sqlite3_bind_double(stmt, 3, c) } else { sqlite3_bind_null(stmt, 3) }
             sqlite3_bind_double(stmt, 4, seg.startTime)
             sqlite3_bind_double(stmt, 5, seg.endTime)
+            if let s = seg.speaker { sqlite3_bind_text(stmt, 6, s, -1, SQLITE_TRANSIENT) } else { sqlite3_bind_null(stmt, 6) }
             if sqlite3_step(stmt) != SQLITE_DONE {
                 execute("ROLLBACK")
                 throw DatabaseError.insertFailed(dbError())
@@ -331,7 +333,7 @@ public final class DatabaseManager {
 
     public func fetchTranscripts(forRecording id: Int64) throws -> [Transcript] {
         let sql = """
-        SELECT id, recording_id, text, confidence_score, start_time, end_time
+        SELECT id, recording_id, text, confidence_score, start_time, end_time, speaker
         FROM transcripts WHERE recording_id = ? ORDER BY start_time
         """
         var stmt: OpaquePointer?
@@ -529,8 +531,9 @@ public final class DatabaseManager {
         let conf = sqlite3_column_type(stmt, 3) != SQLITE_NULL ? sqlite3_column_double(stmt, 3) : nil as Double?
         let start = sqlite3_column_double(stmt, 4)
         let end = sqlite3_column_double(stmt, 5)
+        let speaker = sqlite3_column_type(stmt, 6) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 6)) : nil as String?
         return Transcript(id: id, recordingID: rid, text: text, confidenceScore: conf,
-                          startTime: start, endTime: end)
+                          startTime: start, endTime: end, speaker: speaker)
     }
 
     private func bind(_ stmt: OpaquePointer?, index: Int32, value: Any) {
