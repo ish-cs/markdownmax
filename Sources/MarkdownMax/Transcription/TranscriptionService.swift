@@ -1,6 +1,7 @@
 import MarkdownMaxCore
 import Foundation
 import WhisperKit
+import SpeakerKit
 
 enum TranscriptionError: Error, LocalizedError {
     case noModelInstalled
@@ -28,6 +29,7 @@ final class TranscriptionService: ObservableObject {
 
     private(set) var whisper: WhisperKit?
     private var loadedModelName: String?
+    private var speakerKit: SpeakerKit?
 
     // MARK: - Model Loading
 
@@ -44,6 +46,10 @@ final class TranscriptionService: ObservableObject {
             loadedModelName = modelName
         } catch {
             throw TranscriptionError.modelLoadFailed(error.localizedDescription)
+        }
+
+        if speakerKit == nil {
+            speakerKit = try? await SpeakerKit()
         }
     }
 
@@ -136,6 +142,39 @@ final class TranscriptionService: ObservableObject {
                 currentSegmentText = trimmed
             }
         }
+
+        if let sk = speakerKit {
+            do {
+                let audioArray = try AudioProcessor.loadAudioAsFloatArray(fromPath: audioURL.path)
+                let diarization = try await sk.diarize(audioArray: audioArray)
+                let labeled = diarization.addSpeakerInfo(to: results, strategy: .segment)
+
+                var speakerByStart: [Int: String] = [:]
+                for group in labeled {
+                    for seg in group {
+                        let trimmed = seg.text.strippingWhisperTokens.trimmingCharacters(in: .whitespaces)
+                        guard !trimmed.isEmpty else { continue }
+                        if let id = seg.speaker.speakerId {
+                            let key = Int((Double(seg.startTime) * 100).rounded())
+                            speakerByStart[key] = String(format: "SPEAKER_%02d", id)
+                        }
+                    }
+                }
+
+                for i in segments.indices {
+                    let key = Int((segments[i].startTime * 100).rounded())
+                    if let speaker = speakerByStart[key] {
+                        segments[i].speaker = speaker
+                    } else if let match = speakerByStart.min(by: { abs($0.key - key) < abs($1.key - key) }),
+                              abs(match.key - key) <= 50 {
+                        segments[i].speaker = match.value
+                    }
+                }
+            } catch {
+                appLog("Diarization failed: \(error.localizedDescription)", .error)
+            }
+        }
+
         return segments
     }
 

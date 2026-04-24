@@ -14,7 +14,7 @@
 		1D85E2BF86BE17A667A0FD99 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9650F7F7EF2858B1375646E4 /* AppState.swift */; };
 		1FA2EC963DDC86A326D7349E /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9ACEB824A4D2BAF312618A9C /* WhisperKit */; };
 		27503F84AB59128D148FE48F /* MarkdownMaxCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7392F5AAE0DD4AF8108FFD13 /* MarkdownMaxCore.framework */; };
-		2969D1A38BE0332BE2A1B401 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = EC6C63A4D7E14C95D87371A1 /* KeyboardShortcuts */; };
+		2969D1A38BE0332BE2A1B401 /* SpeakerKit in Frameworks */ = {isa = PBXBuildFile; productRef = 340DC83D68085DC67D2C1331 /* SpeakerKit */; };
 		2B4F9DBB996D7390B9C75713 /* MarkdownMaxCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7392F5AAE0DD4AF8108FFD13 /* MarkdownMaxCore.framework */; };
 		2F2411A21F394E9EAD8CC8B8 /* AudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B83A514EB11ABAFCFE1CFFB8 /* AudioPlayer.swift */; };
 		48ABE6CEBD6BA028BDC7EA99 /* Recording.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53178107A128A21AAE2865B0 /* Recording.swift */; };
@@ -44,6 +44,7 @@
 		BC9FD095DDA7956C28B10D52 /* RecordingMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 669399592924BCCE3D5EC65D /* RecordingMode.swift */; };
 		CDC422CB30FBCD6161A93221 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C259C90E6727E123EB13F07 /* DesignSystem.swift */; };
 		F3420438A7E47B779AC168C4 /* AlwaysOnRecordingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69A0E754F0974577BC33B4E4 /* AlwaysOnRecordingService.swift */; };
+		FB20E01F8BE741FD66EA00EC /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = EC6C63A4D7E14C95D87371A1 /* KeyboardShortcuts */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -134,7 +135,8 @@
 			files = (
 				2B4F9DBB996D7390B9C75713 /* MarkdownMaxCore.framework in Frameworks */,
 				1FA2EC963DDC86A326D7349E /* WhisperKit in Frameworks */,
-				2969D1A38BE0332BE2A1B401 /* KeyboardShortcuts in Frameworks */,
+				2969D1A38BE0332BE2A1B401 /* SpeakerKit in Frameworks */,
+				FB20E01F8BE741FD66EA00EC /* KeyboardShortcuts in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -168,22 +170,12 @@
 				3F0950CC8B00E303C5162605 /* MarkdownMax.entitlements */,
 				30C3E26879EF650FCC49DDBA /* App */,
 				721BD9F5518EC8AF18EA8110 /* Audio */,
-				614239AA2955EED080439BF8 /* Database */,
-				1A9B43084939928B5115872E /* Models */,
 				C9D83A8BA56887CDE0D1046F /* Services */,
 				C6AD2157B89E6017514315E3 /* Transcription */,
-				BA4D3E639DE917CE162C88BC /* Utils */,
 				29EDEC5F987A0B8C061EDD4E /* Views */,
 			);
 			name = MarkdownMax;
 			path = Sources/MarkdownMax;
-			sourceTree = "<group>";
-		};
-		1A9B43084939928B5115872E /* Models */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = Models;
 			sourceTree = "<group>";
 		};
 		29EDEC5F987A0B8C061EDD4E /* Views */ = {
@@ -224,13 +216,6 @@
 			path = Sources/MarkdownMaxCore;
 			sourceTree = "<group>";
 		};
-		614239AA2955EED080439BF8 /* Database */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = Database;
-			sourceTree = "<group>";
-		};
 		616CBB99D88D6F123B5198C6 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -261,13 +246,6 @@
 				089A8AA2FCE30C61DE177178 /* WAVFileUtils.swift */,
 			);
 			path = Audio;
-			sourceTree = "<group>";
-		};
-		BA4D3E639DE917CE162C88BC /* Utils */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = Utils;
 			sourceTree = "<group>";
 		};
 		C6AD2157B89E6017514315E3 /* Transcription */ = {
@@ -318,6 +296,7 @@
 			name = MarkdownMax;
 			packageProductDependencies = (
 				9ACEB824A4D2BAF312618A9C /* WhisperKit */,
+				340DC83D68085DC67D2C1331 /* SpeakerKit */,
 				EC6C63A4D7E14C95D87371A1 /* KeyboardShortcuts */,
 			);
 			productName = MarkdownMax;
@@ -810,6 +789,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		340DC83D68085DC67D2C1331 /* SpeakerKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8EAB174D4F28CD8EC802283E /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			productName = SpeakerKit;
+		};
 		9ACEB824A4D2BAF312618A9C /* WhisperKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 8EAB174D4F28CD8EC802283E /* XCRemoteSwiftPackageReference "WhisperKit" */;

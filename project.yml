@@ -50,6 +50,8 @@ targets:
       - target: MarkdownMaxCore
       - package: WhisperKit
         product: WhisperKit
+      - package: WhisperKit
+        product: SpeakerKit
       - package: KeyboardShortcuts
         product: KeyboardShortcuts
     settings:
