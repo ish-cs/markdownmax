@@ -35,15 +35,41 @@ struct TranscriptTextView: NSViewRepresentable {
         context.coordinator.onSeek = onSeek
 
         let segIDs = segments.map(\.id)
-        if context.coordinator.lastSegmentIDs != segIDs || context.coordinator.lastShowTimestamps != showTimestamps {
+        let speakerLabels = segments.map(\.speaker)
+        if context.coordinator.lastSegmentIDs != segIDs
+            || context.coordinator.lastShowTimestamps != showTimestamps
+            || context.coordinator.lastSpeakerLabels != speakerLabels {
             context.coordinator.lastSegmentIDs = segIDs
             context.coordinator.lastShowTimestamps = showTimestamps
+            context.coordinator.lastSpeakerLabels = speakerLabels
             let (attrStr, ranges) = buildContent()
             tv.textStorage?.setAttributedString(attrStr)
             context.coordinator.segmentRanges = ranges
         }
 
         applyHighlight(tv: tv, ranges: context.coordinator.segmentRanges)
+    }
+
+    private func speakerColor(for label: String) -> NSColor {
+        switch label {
+        case "SPEAKER_00": return .systemGreen
+        case "SPEAKER_01": return .systemBlue
+        case "SPEAKER_02": return .systemOrange
+        case "SPEAKER_03": return .systemPurple
+        default: return .systemGray
+        }
+    }
+
+    private func speakerChip(for label: String) -> NSAttributedString {
+        let color = speakerColor(for: label)
+        let para = NSMutableParagraphStyle()
+        para.paragraphSpacing = 2
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 9, weight: .bold),
+            .foregroundColor: color,
+            .paragraphStyle: para
+        ]
+        return NSAttributedString(string: label.uppercased() + "\n", attributes: attrs)
     }
 
     private func buildContent() -> (NSAttributedString, [NSRange]) {
@@ -54,7 +80,18 @@ struct TranscriptTextView: NSViewRepresentable {
         let para = NSMutableParagraphStyle()
         para.paragraphSpacing = 6
 
+        let hasSpeakers = segments.contains(where: { $0.speaker != nil })
+
         for (i, seg) in segments.enumerated() {
+            let prevSpeaker = i > 0 ? segments[i - 1].speaker : nil
+            if hasSpeakers, let speaker = seg.speaker, speaker != prevSpeaker {
+                if i > 0 {
+                    result.append(NSAttributedString(string: "\n",
+                        attributes: [.font: bodyFont, .paragraphStyle: para]))
+                }
+                result.append(speakerChip(for: speaker))
+            }
+
             if showTimestamps {
                 let ts = seg.startTime.durationFormatted
                 let chip = NSMutableAttributedString(string: ts + "  ")
@@ -103,6 +140,7 @@ struct TranscriptTextView: NSViewRepresentable {
         var onSeek: ((TimeInterval) -> Void)?
         var lastSegmentIDs: [Int64] = []
         var lastShowTimestamps: Bool = true
+        var lastSpeakerLabels: [String?] = []
         var segmentRanges: [NSRange] = []
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
