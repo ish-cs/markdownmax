@@ -46,10 +46,36 @@ public final class ExportService {
         lines.append("---")
         lines.append("")
 
-        for seg in segments {
-            let timestamp = "[\(seg.timeRangeFormatted)]"
-            lines.append("\(timestamp) \(seg.text)")
-            lines.append("")
+        let hasSpeakers = segments.contains(where: { $0.speaker != nil })
+
+        if !hasSpeakers {
+            // Export without speaker labels
+            for seg in segments {
+                let timestamp = "[\(seg.timeRangeFormatted)]"
+                lines.append("\(timestamp) \(seg.text)")
+                lines.append("")
+            }
+        } else {
+            // Group consecutive same-speaker segments
+            var runs: [(speaker: String, segs: [Transcript])] = []
+            for seg in segments {
+                let label = seg.speaker ?? "UNKNOWN"
+                if runs.last?.speaker == label {
+                    runs[runs.count - 1].segs.append(seg)
+                } else {
+                    runs.append((speaker: label, segs: [seg]))
+                }
+            }
+
+            // Emit formatted blocks
+            for run in runs {
+                let firstTimestamp = "[\(run.segs[0].timeRangeFormatted)]"
+                lines.append("**\(run.speaker)** \(firstTimestamp)")
+                for seg in run.segs {
+                    lines.append(seg.text)
+                }
+                lines.append("")
+            }
         }
 
         return lines.joined(separator: "\n")
@@ -68,8 +94,34 @@ public final class ExportService {
         }
         lines.append("")
 
-        for seg in segments {
-            lines.append("[\(seg.timeRangeFormatted)] \(seg.text)")
+        let hasSpeakers = segments.contains(where: { $0.speaker != nil })
+
+        if !hasSpeakers {
+            // Export without speaker labels
+            for seg in segments {
+                lines.append("[\(seg.timeRangeFormatted)] \(seg.text)")
+            }
+        } else {
+            // Group consecutive same-speaker segments
+            var runs: [(speaker: String, segs: [Transcript])] = []
+            for seg in segments {
+                let label = seg.speaker ?? "UNKNOWN"
+                if runs.last?.speaker == label {
+                    runs[runs.count - 1].segs.append(seg)
+                } else {
+                    runs.append((speaker: label, segs: [seg]))
+                }
+            }
+
+            // Emit formatted blocks
+            for run in runs {
+                let firstTimestamp = "[\(run.segs[0].timeRangeFormatted)]"
+                lines.append("\(run.speaker) \(firstTimestamp)")
+                for seg in run.segs {
+                    lines.append(seg.text)
+                }
+                lines.append("")
+            }
         }
 
         return lines.joined(separator: "\n")
